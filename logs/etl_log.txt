@@ -1,0 +1,80 @@
+[22:39:06] EXTRACT: Reading Source 1 - Customer & Billing System (CSV)
+[22:39:06]   -> 7043 rows, 17 columns extracted
+[22:39:06] EXTRACT: Reading Source 2 - Location Reference System (CSV)
+[22:39:06]   -> 1652 rows, 6 columns extracted
+[22:39:06] EXTRACT: Reading Source 3 - Service Provisioning System (JSON)
+[22:39:06]   -> 7043 rows, 10 columns extracted
+[22:39:06] EXTRACT: Reading Source 4 - original raw export (Excel) for source-preparation audit
+[22:39:06]   -> 7043 rows, 33 columns extracted
+[22:39:06]   -> Raw issues found: 11 blank Total Charges, 5174 empty Churn Reason (active customers)
+[22:39:06]   -> Raw categories kept as-is by design: 682 'No phone service', 1526 accounts with no internet service
+[22:39:07]   -> Reconciliation: CustomerID sets identical across raw, billing CSV and service JSON: True
+[22:39:07]   -> Reconciliation: prepared sources hold 11 tenure-0 accounts (raw blank Total Charges = 11; all blanks belong to tenure-0 accounts: True)
+[22:39:07] TRANSFORM: Joining sources on Zip_Code and CustomerID
+[22:39:07]   -> Merged dataset: 7043 rows, 31 columns
+[22:39:07] TRANSFORM: Missing value handling
+[22:39:07]   -> Blank Total_Charges remaining in prepared source: 0 (set to 0 and cast to float; raw export had 11, already fixed during source preparation)
+[22:39:07]   -> Null Churn_Reason remaining in prepared source: 0 (raw export had 5174, labelled 'Not Applicable - Active Customer' during preparation)
+[22:39:07] TRANSFORM: Deduplication check
+[22:39:07]   -> Duplicate CustomerIDs found: 0
+[22:39:07] TRANSFORM: Standardisation - trimming whitespace on text columns
+[22:39:07]   -> Trimmed 22 text columns
+[22:39:07] TRANSFORM: Derived attribute creation
+[22:39:07]   -> Created Avg_Monthly_Spend and Tenure_Years derived columns
+[22:39:07]   -> Created Join_Date derived column (snapshot 2023-09-30 minus tenure x 30 days); 73 distinct join dates
+[22:39:07]   -> Created Risk_Segment (Low <40, Medium 40-69, High >=70): {'Medium Risk': 2805, 'High Risk': 2559, 'Low Risk': 1679}
+[22:39:07] TRANSFORM: Data type conversion check
+[22:39:07]   -> Confirmed Churn_Value, Churn_Score, CLTV as integer types
+[22:39:07] TRANSFORM: Data quality rules (critical rules stop the pipeline)
+[22:39:07]   -> R1 Every customer Zip_Code exists in the location reference: 0 violations [PASS]
+[22:39:07]   -> R2 Churn_Label agrees with Churn_Value: 0 violations [PASS]
+[22:39:07]   -> R3 Churn_Score within 0-100: 0 violations [PASS]
+[22:39:07]   -> R4 Monthly_Charges > 0 and Tenure_Months >= 0: 0 violations [PASS]
+[22:39:07]   -> R5 Total_Charges is 0 only for tenure-0 accounts: 0 violations [PASS]
+[22:39:07]   -> R6 Churn_Reason present for churned customers only: 0 violations [PASS]
+[22:39:07]   -> R7 CLTV > 0: 0 violations [PASS]
+[22:39:07]   -> R8 Total_Charges within 50% of Tenure x Monthly_Charges: 2 violations [FLAGGED - retained]
+[22:39:07] TRANSFORM COMPLETE: Final cleaned dataset 7043 rows x 35 columns
+[22:39:07] LOAD: Connecting to target warehouse (SQLite)
+[22:39:07] LOAD: Writing staging table Stg_CustomerMaster (cleaned, integrated, pre-dimensional)
+[22:39:07]   -> Staged 7043 rows x 35 columns
+[22:39:07] LOAD: Building Dim_Customer
+[22:39:07]   -> Loaded 7043 rows
+[22:39:07] LOAD: Building Dim_Location
+[22:39:07]   -> Loaded 1652 rows
+[22:39:07] LOAD: Building Dim_Service (junk dimension)
+[22:39:07]   -> Loaded 322 rows
+[22:39:07] LOAD: Building Dim_Contract
+[22:39:07]   -> Loaded 24 rows
+[22:39:07] LOAD: Building Dim_Date (derived from Join_Date)
+[22:39:07]   -> Loaded 73 rows (2017-10-31 to 2023-09-30)
+[22:39:07] LOAD: Building Fact_CustomerAccount (attaching surrogate keys)
+[22:39:07]   -> Loaded 7043 rows into Fact_CustomerAccount
+[22:39:07] LOAD: Building data mart Mart_CustomerRetention from the star schema
+[22:39:07]   -> Loaded 7043 rows x 29 columns
+[22:39:07] LOAD: Creating retention analytical views on the mart
+[22:39:07]   -> vw_Retention_Summary: 1 rows - Headline retention KPIs for the whole customer base (one row).
+[22:39:07]   -> vw_Retention_ByRiskSegment: 3 rows - How customers, churn and revenue split across Low / Medium / High risk.
+[22:39:07]   -> vw_Retention_ByContract: 9 rows - Which contract type and internet service combinations churn most.
+[22:39:07]   -> vw_Retention_ByTenureBand: 4 rows - How churn changes as customers stay longer.
+[22:39:07]   -> vw_Retention_ByJoinQuarter: 24 rows - Customer cohorts by join quarter: size, churn and average charges.
+[22:39:07]   -> vw_AtRisk_ActiveCustomers: 950 rows - Call list for the retention team: active customers currently scored High Risk.
+[22:39:07] LOAD: Exported mart to data/processed/retention_mart.csv
+[22:39:07] VALIDATION: Checking for null foreign keys
+[22:39:07]   -> Null foreign keys found: 0 (expected: 0)
+[22:39:07] VALIDATION: Checking every fact foreign key exists in its dimension (orphan check)
+[22:39:07]   -> CustomerKey -> Dim_Customer: 0 orphan rows (expected: 0)
+[22:39:07]   -> LocationKey -> Dim_Location: 0 orphan rows (expected: 0)
+[22:39:07]   -> ServiceKey -> Dim_Service: 0 orphan rows (expected: 0)
+[22:39:07]   -> ContractKey -> Dim_Contract: 0 orphan rows (expected: 0)
+[22:39:07]   -> DateKey -> Dim_Date: 0 orphan rows (expected: 0)
+[22:39:07] VALIDATION: Comparing churn rate before vs after load
+[22:39:07]   -> Source churn rate: 26.5370% | Warehouse churn rate: 26.5370% | Match: True
+[22:39:07] VALIDATION: Row count reconciliation
+[22:39:07]   -> Staging rows: 7043 | Fact table rows: 7043 | Match: True
+[22:39:07]   -> Source rows: 7043 | Fact table rows: 7043 | Match: True
+[22:39:07] VALIDATION: Data mart reconciliation
+[22:39:07]   -> Mart rows: 7043 | Fact table rows: 7043 | Match: True
+[22:39:07]   -> Mart churn rate: 26.5370% | Warehouse churn rate: 26.5370% | Match: True
+[22:39:07]   -> View totals reconcile to 7043 customers: risk 7043, contract 7043, tenure 7043, join quarter 7043 | Match: True
+[22:39:07] ETL PIPELINE COMPLETE
